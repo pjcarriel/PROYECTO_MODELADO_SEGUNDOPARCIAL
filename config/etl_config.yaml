@@ -1,0 +1,119 @@
+project:
+  name: etl_spark_parquet_advanced
+  base_dir: .
+  process_id: AUTO_UUID_V4
+
+paths:
+  raw: data/raw
+  bronze: data/bronze
+  silver: data/silver
+  gold: data/gold
+  quarantine: data/quarantine
+  audit: data/audit
+  metadata: metadata
+  logs: logs
+
+spark:
+  master: local[*]
+  app_name: ETL_Spark_Parquet_Advanced_Persona1
+  executor_memory: 4g
+  driver_memory: 4g
+  shuffle_partitions: 8
+
+flags:
+  overwrite_bronze: true
+  overwrite_silver: true
+  drop_suspicious: false
+  overwrite_audit_inventory: true
+
+database:
+  engine: sqlite
+  host: localhost
+  port: 0
+  database: data/gold/nyc_taxi_lakehouse.db
+  user: ''
+  password: ''
+
+downloads:
+  nyc_tlc_base_url: https://d37ci6vzurychx.cloudfront.net/trip-data
+  apache_parquet_testing_bad_data_api: https://api.github.com/repos/apache/parquet-testing/contents/bad_data
+  apache_parquet_testing_max_files: 25
+
+files:
+  - file_name: yellow_tripdata_2023-01.parquet
+    service_type: yellow
+    source_system: NYC_TLC
+    year: 2023
+    month: 01
+    url: https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-01.parquet
+    raw_relative_path: data/raw/yellow/year=2023/month=01/yellow_tripdata_2023-01.parquet
+  - file_name: yellow_tripdata_2023-02.parquet
+    service_type: yellow
+    source_system: NYC_TLC
+    year: 2023
+    month: 02
+    url: https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-02.parquet
+    raw_relative_path: data/raw/yellow/year=2023/month=02/yellow_tripdata_2023-02.parquet
+  - file_name: yellow_tripdata_2023-03.parquet
+    service_type: yellow
+    source_system: NYC_TLC
+    year: 2023
+    month: 03
+    url: https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-03.parquet
+    raw_relative_path: data/raw/yellow/year=2023/month=03/yellow_tripdata_2023-03.parquet
+  - file_name: yellow_tripdata_2023-04.parquet
+    service_type: yellow
+    source_system: NYC_TLC
+    year: 2023
+    month: 04
+    url: https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-04.parquet
+    raw_relative_path: data/raw/yellow/year=2023/month=04/yellow_tripdata_2023-04.parquet
+  - file_name: green_tripdata_2023-01.parquet
+    service_type: green
+    source_system: NYC_TLC
+    year: 2023
+    month: 01
+    url: https://d37ci6vzurychx.cloudfront.net/trip-data/green_tripdata_2023-01.parquet
+    raw_relative_path: data/raw/green/year=2023/month=01/green_tripdata_2023-01.parquet
+  - file_name: green_tripdata_2023-02.parquet
+    service_type: green
+    source_system: NYC_TLC
+    year: 2023
+    month: 02
+    url: https://d37ci6vzurychx.cloudfront.net/trip-data/green_tripdata_2023-02.parquet
+    raw_relative_path: data/raw/green/year=2023/month=02/green_tripdata_2023-02.parquet
+  - file_name: fhvhv_tripdata_2023-01.parquet
+    service_type: fhvhv
+    source_system: NYC_TLC
+    year: 2023
+    month: 01
+    url: https://d37ci6vzurychx.cloudfront.net/trip-data/fhvhv_tripdata_2023-01.parquet
+    raw_relative_path: data/raw/fhvhv/year=2023/month=01/fhvhv_tripdata_2023-01.parquet
+  - file_name: yellow_tripdata_2022-01.parquet
+    service_type: yellow
+    source_system: NYC_TLC
+    year: 2022
+    month: 01
+    url: https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2022-01.parquet
+    raw_relative_path: data/raw/yellow/year=2022/month=01/yellow_tripdata_2022-01.parquet
+  - file_name: yellow_tripdata_2022-02.parquet
+    service_type: yellow
+    source_system: NYC_TLC
+    year: 2022
+    month: 02
+    url: https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2022-02.parquet
+    raw_relative_path: data/raw/yellow/year=2022/month=02/yellow_tripdata_2022-02.parquet
+  - file_name: yellow_tripdata_2021-01.parquet
+    service_type: yellow
+    source_system: NYC_TLC
+    year: 2021
+    month: 01
+    url: https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2021-01.parquet
+    raw_relative_path: data/raw/yellow/year=2021/month=01/yellow_tripdata_2021-01.parquet
+  - file_name: yellow_tripdata_2020-01.parquet
+    service_type: yellow
+    source_system: NYC_TLC
+    year: 2020
+    month: 01
+    url: https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2020-01.parquet
+    raw_relative_path: data/raw/yellow/year=2020/month=01/yellow_tripdata_2020-01.parquet

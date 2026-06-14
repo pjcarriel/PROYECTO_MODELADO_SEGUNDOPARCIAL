@@ -1,0 +1,39 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Datos grandes y salidas generadas por Spark
+data/raw/
+data/bronze/
+data/silver/
+data/gold/
+
+# Resultados generados automáticamente
+data/audit/**
+!data/audit/
+!data/audit/.gitkeep
+
+data/quarantine/**
+!data/quarantine/
+!data/quarantine/.gitkeep
+
+# Archivos internos de Spark/Hadoop
+*.crc
+_SUCCESS
+
+# Logs y temporales
+logs/**
+!logs/
+!logs/.gitkeep
+
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Bases locales
+*.db
+*.sqlite
+*.sqlite3

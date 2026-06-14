@@ -1,0 +1,97 @@
+{
+  "description": "Reglas de homologación de columnas hacia el esquema canónico. La Persona 2 las usa para reconstruir bronze/silver.",
+  "service_type_values": {
+    "yellow": "yellow",
+    "green": "green",
+    "fhvhv": "fhvhv"
+  },
+  "homologation": {
+    "pickup_datetime": {
+      "yellow": "tpep_pickup_datetime",
+      "green": "lpep_pickup_datetime",
+      "fhvhv": "pickup_datetime"
+    },
+    "dropoff_datetime": {
+      "yellow": "tpep_dropoff_datetime",
+      "green": "lpep_dropoff_datetime",
+      "fhvhv": "dropoff_datetime"
+    },
+    "vendor_id": {
+      "yellow": "VendorID",
+      "green": "VendorID",
+      "fhvhv": "hvfhs_license_num"
+    },
+    "passenger_count": {
+      "yellow": "passenger_count",
+      "green": "passenger_count",
+      "fhvhv": null
+    },
+    "trip_distance": {
+      "yellow": "trip_distance",
+      "green": "trip_distance",
+      "fhvhv": "trip_miles"
+    },
+    "pickup_location_id": {
+      "yellow": "PULocationID",
+      "green": "PULocationID",
+      "fhvhv": "PULocationID"
+    },
+    "dropoff_location_id": {
+      "yellow": "DOLocationID",
+      "green": "DOLocationID",
+      "fhvhv": "DOLocationID"
+    },
+    "payment_type": {
+      "yellow": "payment_type",
+      "green": "payment_type",
+      "fhvhv": null
+    },
+    "fare_amount": {
+      "yellow": "fare_amount",
+      "green": "fare_amount",
+      "fhvhv": "base_passenger_fare"
+    },
+    "extra_amount": {
+      "yellow": "extra",
+      "green": "extra",
+      "fhvhv": null
+    },
+    "mta_tax": {
+      "yellow": "mta_tax",
+      "green": "mta_tax",
+      "fhvhv": null
+    },
+    "tip_amount": {
+      "yellow": "tip_amount",
+      "green": "tip_amount",
+      "fhvhv": "tips"
+    },
+    "tolls_amount": {
+      "yellow": "tolls_amount",
+      "green": "tolls_amount",
+      "fhvhv": "tolls"
+    },
+    "total_amount": {
+      "yellow": "total_amount",
+      "green": "total_amount",
+      "fhvhv": "base_passenger_fare + tolls + sales_tax"
+    },
+    "congestion_surcharge": {
+      "yellow": "congestion_surcharge",
+      "green": "congestion_surcharge",
+      "fhvhv": "congestion_surcharge"
+    },
+    "airport_fee": {
+      "yellow": "airport_fee",
+      "green": null,
+      "fhvhv": "airport_fee"
+    }
+  },
+  "critical_fields": [
+    "pickup_datetime",
+    "dropoff_datetime",
+    "trip_distance",
+    "fare_amount",
+    "total_amount"
+  ]
+}
