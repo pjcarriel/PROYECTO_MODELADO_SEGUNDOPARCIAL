@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -122,3 +123,171 @@ def write_schema_differences(df, config: dict):
     output_path = resolve_path(config, "audit") / "schema_differences"
     df.write.mode("overwrite").parquet(str(output_path))
     return str(output_path)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PERSONA 2 — Reconstrucción canónica y manejo de archivos dañados
+# ─────────────────────────────────────────────────────────────────────────────
+
+CANONICAL_FIELDS = [
+    "trip_id", "service_type", "vendor_id", "pickup_datetime", "dropoff_datetime",
+    "passenger_count", "trip_distance", "pickup_location_id", "dropoff_location_id",
+    "payment_type", "fare_amount", "extra_amount", "mta_tax", "tip_amount",
+    "tolls_amount", "total_amount", "congestion_surcharge", "airport_fee",
+    "year", "month", "source_file", "ingestion_timestamp", "improvement_surcharge",
+    "quality_status",
+]
+
+
+def _load_business_rules(config: dict) -> dict:
+    rules_path = resolve_path(config, "metadata") / "business_rules.json"
+    with rules_path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def apply_canonical_schema(df, service_type: str, source_file: str, config: dict):
+    """
+    Homologa un DataFrame de cualquier servicio (yellow/green/fhvhv) al esquema
+    canónico unificado de 24 campos definido en canonical_schema_trips.json.
+
+    - Columnas ausentes se agregan como null del tipo correcto.
+    - Tipos incorrectos se castean (Spark produce null si el cast falla).
+    - Columnas extra no canónicas se descartan.
+    """
+    from pyspark.sql.functions import (
+        col, lit, sha2, concat_ws, current_timestamp,
+        year as spark_year, month as spark_month,
+    )
+    from pyspark.sql.types import StringType, DoubleType, IntegerType, TimestampType
+
+    rules = _load_business_rules(config)
+    hom = rules["homologation"]
+
+    def resolve_col(canonical_name, target_type):
+        src_name = hom.get(canonical_name, {}).get(service_type)
+        if src_name and src_name in df.columns:
+            return col(src_name).cast(target_type)
+        return lit(None).cast(target_type)
+
+    # Columnas clave para trip_id
+    pickup_src = hom.get("pickup_datetime", {}).get(service_type)
+    dropoff_src = hom.get("dropoff_datetime", {}).get(service_type)
+    vendor_src = hom.get("vendor_id", {}).get(service_type)
+    fare_src = hom.get("fare_amount", {}).get(service_type)
+
+    pickup_expr = col(pickup_src).cast(TimestampType()) if pickup_src and pickup_src in df.columns else lit(None).cast(TimestampType())
+    dropoff_expr = col(dropoff_src).cast(TimestampType()) if dropoff_src and dropoff_src in df.columns else lit(None).cast(TimestampType())
+    vendor_expr = col(vendor_src).cast(StringType()) if vendor_src and vendor_src in df.columns else lit(None).cast(StringType())
+    fare_expr = col(fare_src).cast(DoubleType()) if fare_src and fare_src in df.columns else lit(None).cast(DoubleType())
+
+    # Caso especial fhvhv: total_amount = base_passenger_fare + tolls + sales_tax
+    if service_type == "fhvhv":
+        bpf = col("base_passenger_fare").cast(DoubleType()) if "base_passenger_fare" in df.columns else lit(0.0)
+        tolls_c = col("tolls").cast(DoubleType()) if "tolls" in df.columns else lit(0.0)
+        stax = col("sales_tax").cast(DoubleType()) if "sales_tax" in df.columns else lit(0.0)
+        total_expr = (bpf + tolls_c + stax).cast(DoubleType())
+    else:
+        total_expr = resolve_col("total_amount", DoubleType())
+
+    # improvement_surcharge: columna directa en yellow/green, null en fhvhv
+    impr_src = hom.get("improvement_surcharge", {}).get(service_type)
+    impr_expr = col(impr_src).cast(DoubleType()) if impr_src and impr_src in df.columns else lit(None).cast(DoubleType())
+
+    return df.select(
+        sha2(concat_ws("|",
+            lit(service_type),
+            pickup_expr.cast(StringType()),
+            dropoff_expr.cast(StringType()),
+            vendor_expr,
+            fare_expr.cast(StringType()),
+        ), 256).alias("trip_id"),
+        lit(service_type).cast(StringType()).alias("service_type"),
+        vendor_expr.alias("vendor_id"),
+        pickup_expr.alias("pickup_datetime"),
+        dropoff_expr.alias("dropoff_datetime"),
+        resolve_col("passenger_count", DoubleType()).alias("passenger_count"),
+        resolve_col("trip_distance", DoubleType()).alias("trip_distance"),
+        resolve_col("pickup_location_id", IntegerType()).alias("pickup_location_id"),
+        resolve_col("dropoff_location_id", IntegerType()).alias("dropoff_location_id"),
+        resolve_col("payment_type", StringType()).alias("payment_type"),
+        fare_expr.alias("fare_amount"),
+        resolve_col("extra_amount", DoubleType()).alias("extra_amount"),
+        resolve_col("mta_tax", DoubleType()).alias("mta_tax"),
+        resolve_col("tip_amount", DoubleType()).alias("tip_amount"),
+        resolve_col("tolls_amount", DoubleType()).alias("tolls_amount"),
+        total_expr.alias("total_amount"),
+        resolve_col("congestion_surcharge", DoubleType()).alias("congestion_surcharge"),
+        resolve_col("airport_fee", DoubleType()).alias("airport_fee"),
+        spark_year(pickup_expr).alias("year"),
+        spark_month(pickup_expr).alias("month"),
+        lit(source_file).cast(StringType()).alias("source_file"),
+        current_timestamp().alias("ingestion_timestamp"),
+        impr_expr.alias("improvement_surcharge"),
+        lit("PENDING").cast(StringType()).alias("quality_status"),
+    )
+
+
+_QUARANTINE_ACTIONS = {
+    "RECUPERABLE_SCHEMA_MISMATCH":         "Aplicar schema recovery con business_rules.json y re-intentar ingesta",
+    "RECUPERABLE_MISSING_COLUMNS":         "Agregar columnas faltantes con valor null y re-intentar ingesta",
+    "RECUPERABLE_TYPE_CASTING":            "Aplicar cast() a los tipos correctos y re-intentar ingesta",
+    "PARTIALLY_RECOVERABLE":               "Extraer row groups válidos con lectura parcial y registrar la pérdida",
+    "NOT_RECOVERABLE_CORRUPT_METADATA":    "Archivar en storage frío, solicitar re-descarga al origen",
+    "NOT_RECOVERABLE_EMPTY_FILE":          "Eliminar y re-descargar desde la fuente NYC TLC",
+    "NOT_RECOVERABLE_UNSUPPORTED_FORMAT":  "Verificar la fuente; el archivo no es un Parquet válido",
+}
+
+
+def classify_corrupt_file(file_path: str, error_msg: str) -> str:
+    """
+    Clasifica un archivo problemático en una de las 7 categorías de quarantine
+    basándose en el texto del error y el tamaño del archivo.
+    """
+    error_lower = (error_msg or "").lower()
+
+    try:
+        if os.path.getsize(str(file_path)) == 0:
+            return "NOT_RECOVERABLE_EMPTY_FILE"
+    except (OSError, FileNotFoundError):
+        pass
+
+    if "empty" in error_lower or "0 bytes" in error_lower or "no rows" in error_lower:
+        return "NOT_RECOVERABLE_EMPTY_FILE"
+    if "footer" in error_lower or "magic" in error_lower or ("metadata" in error_lower and "corrupt" in error_lower):
+        return "NOT_RECOVERABLE_CORRUPT_METADATA"
+    if "partial" in error_lower or "row group" in error_lower:
+        return "PARTIALLY_RECOVERABLE"
+    if "schema" in error_lower or "mismatch" in error_lower:
+        return "RECUPERABLE_SCHEMA_MISMATCH"
+    if "missing" in error_lower or "not found" in error_lower or "column" in error_lower:
+        return "RECUPERABLE_MISSING_COLUMNS"
+    if "cast" in error_lower or "type" in error_lower or "convert" in error_lower:
+        return "RECUPERABLE_TYPE_CASTING"
+    return "NOT_RECOVERABLE_UNSUPPORTED_FORMAT"
+
+
+def generate_quarantine_record(
+    file_name: str,
+    file_path: str,
+    classification: str,
+    exception_text: str,
+    phase: str,
+    quarantine_dir: str,
+) -> dict:
+    """
+    Crea el registro JSON de quarantine con los 7 campos requeridos y lo escribe en disco.
+    """
+    record = {
+        "file_name": file_name,
+        "file_path": str(file_path),
+        "classification": classification,
+        "exception_text": exception_text,
+        "processing_timestamp": datetime.now(timezone.utc).isoformat(),
+        "failed_phase": phase,
+        "recommended_action": _QUARANTINE_ACTIONS.get(classification, "Investigar manualmente"),
+    }
+    out_path = Path(quarantine_dir) / f"{Path(file_name).stem}.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", encoding="utf-8") as f:
+        json.dump(record, f, indent=2, ensure_ascii=False)
+    return record

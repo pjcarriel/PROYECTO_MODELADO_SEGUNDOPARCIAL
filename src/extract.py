@@ -24,6 +24,7 @@ AUDIT_COLUMNS = [
     "file_name",
     "file_path",
     "file_size_mb",
+    "file_hash_sha256",
     "partition_year",
     "partition_month",
     "read_status",
@@ -41,6 +42,7 @@ AUDIT_SCHEMA = StructType([
     StructField("file_name", StringType(), True),
     StructField("file_path", StringType(), True),
     StructField("file_size_mb", DoubleType(), True),
+    StructField("file_hash_sha256", StringType(), True),
     StructField("partition_year", IntegerType(), True),
     StructField("partition_month", IntegerType(), True),
     StructField("read_status", StringType(), True),
@@ -178,6 +180,8 @@ def read_file_safely(spark, file_meta: dict, process_id: str) -> dict:
     processed_at = datetime.now(timezone.utc).replace(tzinfo=None)
     file_size_mb = round(file_path.stat().st_size / 1048576, 2) if file_path.exists() else 0.0
 
+    file_hash = sha256_file(str(file_path)) if file_path.exists() and file_path.stat().st_size > 0 else None
+
     record = {
         "process_id": process_id,
         "source_system": source_system,
@@ -185,6 +189,7 @@ def read_file_safely(spark, file_meta: dict, process_id: str) -> dict:
         "file_name": file_name,
         "file_path": str(file_path),
         "file_size_mb": file_size_mb,
+        "file_hash_sha256": file_hash,
         "partition_year": int(year) if year is not None else None,
         "partition_month": int(month) if month is not None else None,
         "read_status": None,
@@ -226,7 +231,7 @@ def read_file_safely(spark, file_meta: dict, process_id: str) -> dict:
 
 def build_audit_file_inventory(spark, config: dict, process_id: str):
     """
-    Construye audit_file_inventory con exactamente los 14 campos requeridos.
+    Construye audit_file_inventory con exactamente los 15 campos requeridos.
     """
     ensure_directories(config)
     file_metas = collect_configured_file_paths(config, include_bad_parquet=True)

@@ -112,6 +112,11 @@
       "nullable": true
     },
     {
+      "name": "improvement_surcharge",
+      "type": "double",
+      "nullable": true
+    },
+    {
       "name": "quality_status",
       "type": "string",
       "nullable": true

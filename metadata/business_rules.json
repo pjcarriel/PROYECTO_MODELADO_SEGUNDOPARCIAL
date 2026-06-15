@@ -85,6 +85,11 @@
       "yellow": "airport_fee",
       "green": null,
       "fhvhv": "airport_fee"
+    },
+    "improvement_surcharge": {
+      "yellow": "improvement_surcharge",
+      "green": "improvement_surcharge",
+      "fhvhv": null
     }
   },
   "critical_fields": [
