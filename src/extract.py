@@ -213,19 +213,30 @@ def read_file_safely(spark, file_meta: dict, process_id: str) -> dict:
         return record
 
     try:
-        df = spark.read.parquet(str(file_path))
-        count = df.count()
-        record["read_status"] = "SUCCESS" if count > 0 else "EMPTY"
-        record["record_count"] = int(count)
-        record["column_count"] = len(df.columns)
-        record["schema_hash"] = sha256_text(str(df.schema))
+        import pyarrow.parquet as pq
+        # Abrimos con open() nativo de Python para evitar que pyarrow use el
+        # filesystem Hadoop registrado por la JVM de PySpark, lo cual provoca
+        # "getSubject is not supported" en Java 17/21.
+        with open(str(file_path), "rb") as f:
+            pf     = pq.ParquetFile(f)
+            count  = pf.metadata.num_rows
+            schema = pf.schema_arrow
+        record["read_status"]   = "SUCCESS" if count > 0 else "EMPTY"
+        record["record_count"]  = int(count)
+        record["column_count"]  = len(schema)
+        record["schema_hash"]   = sha256_text(str(schema))
         record["error_message"] = None
     except Exception as e:
         error_text = str(e)
-        record["read_status"] = "SCHEMA_ERROR" if "schema" in error_text.lower() else "CORRUPT"
-        record["record_count"] = None
-        record["column_count"] = None
-        record["schema_hash"] = None
+        if "schema" in error_text.lower() or "column" in error_text.lower():
+            record["read_status"] = "SCHEMA_ERROR"
+        elif file_path.stat().st_size == 0:
+            record["read_status"] = "EMPTY"
+        else:
+            record["read_status"] = "CORRUPT"
+        record["record_count"]  = None
+        record["column_count"]  = None
+        record["schema_hash"]   = None
         record["error_message"] = error_text[:4000]
     return record
 
@@ -241,10 +252,16 @@ def build_audit_file_inventory(spark, config: dict, process_id: str):
 def write_audit_inventory(df, config: dict):
     """
     Escribe la tabla en data/audit/audit_file_inventory en modo overwrite para garantizar idempotencia.
+    Usa pandas+pyarrow para escribir el parquet, evitando el error getSubject de Java 17/18+.
     """
+    import shutil
     audit_path = resolve_path(config, "audit") / "audit_file_inventory"
-    mode = "overwrite" if config.get("flags", {}).get("overwrite_audit_inventory", True) else "append"
-    df.write.mode(mode).parquet(str(audit_path))
+    overwrite = config.get("flags", {}).get("overwrite_audit_inventory", True)
+    if overwrite and audit_path.exists():
+        shutil.rmtree(str(audit_path))
+    audit_path.mkdir(parents=True, exist_ok=True)
+    out_file = audit_path / "part-00000.parquet"
+    df.toPandas().to_parquet(str(out_file), index=False, engine="pyarrow")
     return str(audit_path)
 
 def read_partitioned_service_folder(spark, config: dict, service_type: str):

@@ -90,8 +90,36 @@ def infer_source_system(service_type: str) -> str:
     return "APACHE_PARQUET_TESTING" if service_type == "bad_parquet" else "NYC_TLC"
 
 def get_spark_session(config: dict):
+    import os
     from pyspark.sql import SparkSession
+
     spark_cfg = config["spark"]
+
+    # --add-opens con formato =<módulo>=ALL-UNNAMED requerido para Java 17/21.
+    # Se setea JAVA_TOOL_OPTIONS ANTES de crear la sesión para que la JVM
+    # los tome desde el inicio (spark.driver.extraJavaOptions llega tarde en notebooks).
+    java_opens = (
+        "--add-opens=java.base/javax.security.auth=ALL-UNNAMED "
+        "--add-opens=java.base/java.lang=ALL-UNNAMED "
+        "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED "
+        "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED "
+        "--add-opens=java.base/java.io=ALL-UNNAMED "
+        "--add-opens=java.base/java.net=ALL-UNNAMED "
+        "--add-opens=java.base/java.nio=ALL-UNNAMED "
+        "--add-opens=java.base/java.util=ALL-UNNAMED "
+        "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED "
+        "--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED "
+        "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED "
+        "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED "
+        "--add-opens=java.base/sun.security.action=ALL-UNNAMED "
+        "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED "
+        "--add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED "
+        "-Dio.netty.noUnsafe=true"
+    )
+    # Sobreescribir solo si no está ya configurado para no interferir con otros procesos
+    if "JAVA_TOOL_OPTIONS" not in os.environ:
+        os.environ["JAVA_TOOL_OPTIONS"] = java_opens
+
     spark = (
         SparkSession.builder
         .master(str(spark_cfg["master"]))
@@ -101,6 +129,18 @@ def get_spark_session(config: dict):
         .config("spark.sql.shuffle.partitions", str(spark_cfg["shuffle_partitions"]))
         .config("spark.sql.parquet.mergeSchema", "false")
         .config("spark.sql.files.ignoreCorruptFiles", "false")
+        .config("spark.driver.extraJavaOptions", java_opens)
+        .config("spark.executor.extraJavaOptions", java_opens)
+        # Arrow DESHABILITADO: la combinación Arrow+Netty bundled en PySpark 4.x
+        # produce crash del hilo JVM "serve-Arrow" (UnsupportedOperationException en
+        # PooledByteBufAllocatorL). Python queda colgado esperando al hilo muerto.
+        # La serialización row-by-row (sin Arrow) es lenta para DFs grandes, por eso
+        # las conversiones pandas↔Spark de millones de filas se hacen vía pyarrow directamente.
+        .config("spark.sql.execution.arrow.pyspark.enabled", "false")
+        .config("spark.sql.execution.arrow.pyspark.fallback.enabled", "false")
+        # Hadoop security=simple evita Subject.getSubject() (removido en Java 21) y permite
+        # que spark.read.parquet() / spark.write.parquet() lean/escriban el filesystem local.
+        .config("spark.hadoop.hadoop.security.authentication", "simple")
         .getOrCreate()
     )
     return spark

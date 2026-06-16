@@ -89,7 +89,29 @@ def normalize_type(t):
 def diagnose_successful_files(spark, config: dict, inventory_df, process_id: str):
     """
     Lee los archivos con SUCCESS y genera matriz de diferencias de esquema.
+    Usa pyarrow para leer el schema (evita getSubject de Java 17/18+).
     """
+    import pyarrow.parquet as pq
+
+    # Mapeo de tipos pyarrow → tipos Spark simpleString
+    _PA_TO_SPARK = {
+        "int8": "tinyint", "int16": "smallint", "int32": "int", "int64": "long",
+        "uint8": "int", "uint16": "int", "uint32": "long", "uint64": "long",
+        "float": "float", "double": "double", "float16": "float",
+        "bool": "boolean", "large_binary": "binary", "binary": "binary",
+        "string": "string", "large_string": "string", "utf8": "string", "large_utf8": "string",
+        "date32[day]": "date", "date64[ms]": "date",
+    }
+
+    def pa_type_to_spark(pa_type_str: str) -> str:
+        if pa_type_str in _PA_TO_SPARK:
+            return _PA_TO_SPARK[pa_type_str]
+        if pa_type_str.startswith("timestamp"):
+            return "timestamp"
+        if pa_type_str.startswith("decimal"):
+            return "decimal"
+        return pa_type_str
+
     metadata_dir = resolve_path(config, "metadata")
     success_rows = (
         inventory_df
@@ -102,8 +124,9 @@ def diagnose_successful_files(spark, config: dict, inventory_df, process_id: str
     diagnostic_at = datetime.now(timezone.utc).replace(tzinfo=None)
     for r in success_rows:
         expected = expected_fields_map(load_expected_schema(str(metadata_dir), r["service_type"]))
-        df = spark.read.parquet(r["file_path"])
-        actual = spark_schema_map(df)
+        with open(r["file_path"], "rb") as _fh:
+            pa_schema = pq.read_schema(_fh)
+        actual = {field.name: pa_type_to_spark(str(field.type)) for field in pa_schema}
         for diff in compare_schema_maps(expected, actual):
             rows.append({
                 "process_id": process_id,
@@ -120,8 +143,12 @@ def diagnose_successful_files(spark, config: dict, inventory_df, process_id: str
     return spark.createDataFrame(rows, schema=SCHEMA_DIFF_SCHEMA)
 
 def write_schema_differences(df, config: dict):
+    import shutil
     output_path = resolve_path(config, "audit") / "schema_differences"
-    df.write.mode("overwrite").parquet(str(output_path))
+    if output_path.exists():
+        shutil.rmtree(str(output_path))
+    output_path.mkdir(parents=True, exist_ok=True)
+    df.toPandas().to_parquet(str(output_path / "part-00000.parquet"), index=False, engine="pyarrow")
     return str(output_path)
 
 
@@ -156,7 +183,7 @@ def apply_canonical_schema(df, service_type: str, source_file: str, config: dict
     """
     from pyspark.sql.functions import (
         col, lit, sha2, concat_ws, current_timestamp,
-        year as spark_year, month as spark_month,
+        year as spark_year, month as spark_month, coalesce,
     )
     from pyspark.sql.types import StringType, DoubleType, IntegerType, TimestampType
 
@@ -183,8 +210,8 @@ def apply_canonical_schema(df, service_type: str, source_file: str, config: dict
     # Caso especial fhvhv: total_amount = base_passenger_fare + tolls + sales_tax
     if service_type == "fhvhv":
         bpf = col("base_passenger_fare").cast(DoubleType()) if "base_passenger_fare" in df.columns else lit(0.0)
-        tolls_c = col("tolls").cast(DoubleType()) if "tolls" in df.columns else lit(0.0)
-        stax = col("sales_tax").cast(DoubleType()) if "sales_tax" in df.columns else lit(0.0)
+        tolls_c = coalesce(col("tolls").cast(DoubleType()), lit(0.0)) if "tolls" in df.columns else lit(0.0)
+        stax = coalesce(col("sales_tax").cast(DoubleType()), lit(0.0)) if "sales_tax" in df.columns else lit(0.0)
         total_expr = (bpf + tolls_c + stax).cast(DoubleType())
     else:
         total_expr = resolve_col("total_amount", DoubleType())
