@@ -254,6 +254,82 @@ def apply_canonical_schema(df, service_type: str, source_file: str, config: dict
     )
 
 
+def apply_canonical_schema_pd(df_pd, service_type: str, source_file: str, config: dict):
+    """
+    Versión pandas de apply_canonical_schema() — misma lógica sin Spark.
+    Evita el lento spark.createDataFrame(pandas_df) para DataFrames de 3M+ filas.
+    Retorna un pandas DataFrame con exactamente los 24 campos canónicos.
+    """
+    import hashlib
+    import pandas as pd
+    from datetime import datetime, timezone
+
+    rules = _load_business_rules(config)
+    hom = rules["homologation"]
+
+    out = {}
+
+    # Aplicar homologación: para cada campo canónico, buscar la columna origen del servicio
+    for canon_col, mapping in hom.items():
+        src = mapping.get(service_type)
+        if src and src in df_pd.columns:
+            out[canon_col] = df_pd[src].values.copy()
+        else:
+            out[canon_col] = None
+
+    # Caso especial fhvhv: total_amount = base_passenger_fare + tolls + sales_tax
+    if service_type == "fhvhv":
+        bpf = pd.to_numeric(df_pd.get("base_passenger_fare", 0), errors="coerce").fillna(0)
+        tl  = pd.to_numeric(df_pd.get("tolls", 0), errors="coerce").fillna(0)
+        stx = pd.to_numeric(df_pd.get("sales_tax", 0), errors="coerce").fillna(0)
+        out["total_amount"] = (bpf + tl + stx).values
+
+    # improvement_surcharge: yellow/green tienen la columna, fhvhv no
+    impr_src = hom.get("improvement_surcharge", {}).get(service_type)
+    out["improvement_surcharge"] = df_pd[impr_src].values if impr_src and impr_src in df_pd.columns else None
+
+    df_out = pd.DataFrame(out, index=range(len(df_pd)))
+
+    # Castear tipos numéricos
+    for col in ["fare_amount", "extra_amount", "mta_tax", "tip_amount", "tolls_amount",
+                "total_amount", "congestion_surcharge", "airport_fee", "improvement_surcharge",
+                "trip_distance", "passenger_count"]:
+        if col in df_out.columns:
+            df_out[col] = pd.to_numeric(df_out[col], errors="coerce")
+
+    for col in ["pickup_location_id", "dropoff_location_id"]:
+        if col in df_out.columns:
+            df_out[col] = pd.to_numeric(df_out[col], errors="coerce")
+
+    # Castear timestamps
+    df_out["pickup_datetime"]  = pd.to_datetime(df_out.get("pickup_datetime"),  errors="coerce")
+    df_out["dropoff_datetime"] = pd.to_datetime(df_out.get("dropoff_datetime"), errors="coerce")
+
+    # Columnas de metadatos
+    df_out["service_type"]        = service_type
+    df_out["source_file"]         = source_file
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    df_out["ingestion_timestamp"] = now
+    df_out["quality_status"]      = "PENDING"
+
+    # year/month desde pickup_datetime
+    df_out["year"]  = df_out["pickup_datetime"].dt.year.fillna(0).astype("Int64")
+    df_out["month"] = df_out["pickup_datetime"].dt.month.fillna(0).astype("Int64")
+
+    # trip_id: SHA256 idéntico al sha2(concat_ws(...), 256) de Spark
+    key_series = (
+        service_type + "|"
+        + df_out["pickup_datetime"].astype(str) + "|"
+        + df_out["dropoff_datetime"].astype(str) + "|"
+        + df_out.get("vendor_id", pd.Series([""] * len(df_out))).fillna("").astype(str) + "|"
+        + df_out.get("fare_amount", pd.Series([None] * len(df_out))).astype(str)
+    )
+    df_out["trip_id"] = key_series.apply(lambda s: hashlib.sha256(s.encode()).hexdigest())
+
+    # Retornar solo los campos canónicos en el orden definido
+    return df_out[[c for c in CANONICAL_FIELDS if c in df_out.columns]]
+
+
 _QUARANTINE_ACTIONS = {
     "RECUPERABLE_SCHEMA_MISMATCH":         "Aplicar schema recovery con business_rules.json y re-intentar ingesta",
     "RECUPERABLE_MISSING_COLUMNS":         "Agregar columnas faltantes con valor null y re-intentar ingesta",

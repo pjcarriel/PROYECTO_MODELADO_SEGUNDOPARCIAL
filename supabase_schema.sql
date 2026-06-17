@@ -87,25 +87,35 @@ CREATE TABLE IF NOT EXISTS quality_metrics (
 CREATE TABLE IF NOT EXISTS quality_rejected_records (
     process_id              TEXT,
     trip_id                 TEXT,
-    rejection_rule          TEXT,
     service_type            TEXT,
-    year                    INTEGER,
-    month                   INTEGER,
+    source_file             TEXT,
+    rejection_stage         TEXT,
+    rejection_rule          TEXT,
+    rejection_column        TEXT,
+    original_value          TEXT,
+    technical_reason        TEXT,
+    business_reason         TEXT,
+    rejected_at             TIMESTAMPTZ,
     PRIMARY KEY (process_id, trip_id, rejection_rule)
 );
 
 -- 6. audit_file_inventory  (ya debe existir — verificar)
 CREATE TABLE IF NOT EXISTS audit_file_inventory (
     process_id              TEXT,
-    file_name               TEXT,
+    source_system           TEXT,
     service_type            TEXT,
-    year                    INTEGER,
-    month                   INTEGER,
-    read_status             TEXT,
-    num_rows                BIGINT,
+    file_name               TEXT,
+    file_path               TEXT,
     file_size_mb            FLOAT8,
-    ingestion_timestamp     TIMESTAMPTZ,
+    file_hash_sha256        TEXT,
+    partition_year          INTEGER,
+    partition_month         INTEGER,
+    read_status             TEXT,
+    record_count            BIGINT,
+    column_count            INTEGER,
+    schema_hash             TEXT,
     error_message           TEXT,
+    processed_at            TIMESTAMPTZ,
     PRIMARY KEY (process_id, file_name)
 );
 
